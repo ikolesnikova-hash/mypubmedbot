@@ -10,20 +10,27 @@ import os
 import time
 import traceback
 import xml.etree.ElementTree as ET
+from zoneinfo import ZoneInfo
 
 import requests
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EU = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
+
+# на компьютере секреты берутся из .env, на сервере (Railway) - из его переменных
+if os.path.exists(os.path.join(HERE, ".env")):
+    for line in open(os.path.join(HERE, ".env"), encoding="utf-8-sig"):
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            os.environ[key.strip()] = value.strip()
+
+DATA_DIR = os.environ.get("DATA_DIR", HERE)      # на сервере - постоянный диск (Volume)
 SEEN_FILE = os.path.join(HERE, "seen.json")      # старые файлы одного пользователя,
 STATE_FILE = os.path.join(HERE, "state.json")    # нужны только для переноса
-USERS_FILE = os.path.join(HERE, "users.json")
-
-for line in open(os.path.join(HERE, ".env"), encoding="utf-8-sig"):
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        key, value = line.split("=", 1)
-        os.environ[key.strip()] = value.strip()
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+# часовой пояс для часа проверки; без BOT_TZ - время компьютера
+TZ = ZoneInfo(os.environ["BOT_TZ"]) if os.environ.get("BOT_TZ") else None
 
 TG_TOKEN = os.environ["TG_TOKEN"]
 OWNER = str(os.environ["TG_CHAT"])               # владелец: входит без кода
@@ -44,6 +51,9 @@ def new_user(topics=None, days=2, hour=12, seen=None, last_run=""):
 def load_users():
     if os.path.exists(USERS_FILE):
         return json.load(open(USERS_FILE, encoding="utf-8"))
+    # первый запуск на сервере: данные, перенесённые с компьютера через переменную
+    if os.environ.get("USERS_SEED"):
+        return json.loads(os.environ["USERS_SEED"])
     # первый запуск: переносим данные владельца из старой версии
     st = json.load(open(STATE_FILE, encoding="utf-8")) if os.path.exists(STATE_FILE) else {}
     seen = json.load(open(SEEN_FILE)) if os.path.exists(SEEN_FILE) else []
@@ -107,7 +117,7 @@ def show_hours(chat, msg_id=None):
     rows = [[btn(f"{h}:00", f"sethour:{h}") for h in HOURS[i:i + 4]]
             for i in range(0, len(HOURS), 4)]
     rows.append([btn("⬅️ Меню", "menu")])
-    show(chat, msg_id, "Во сколько присылать подборку? (время компьютера, на котором работает бот)",
+    show(chat, msg_id, "Во сколько присылать подборку?",
          {"inline_keyboard": rows})
 
 
@@ -275,7 +285,7 @@ def handle(update):
 
 
 def scheduled():
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(TZ)
     today = now.date().isoformat()
     for chat, u in list(users.items()):
         if now.hour >= u["hour"] and u["last_run"] != today:
